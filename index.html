@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f766e">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Discharge Tracker</title>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#1c2430;--muted:#6b7686;--line:#e1e5ea;--accent:#0f766e;--accent-bg:#d9f2ee;--warn:#b45309;--danger:#b91c1c;--home:#0f766e;--dama:#b45309;--trans:#1d4ed8}
+@media (prefers-color-scheme:dark){:root{color-scheme:dark;--bg:#12161c;--card:#1b222b;--text:#e8edf3;--muted:#93a0b1;--line:#2c3643;--accent:#2dd4bf;--accent-bg:#12403b;--warn:#fbbf24;--danger:#f87171;--home:#2dd4bf;--dama:#fbbf24;--trans:#7aa2ff}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;padding-top:env(safe-area-inset-top,0px)}
+header{position:sticky;top:0;background:var(--bg);padding:12px 14px 8px;z-index:5;border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0 0 8px;display:flex;justify-content:space-between;align-items:center;gap:8px}
+.live{font-size:12px;color:var(--muted);font-weight:400}
+.live i{display:inline-block;width:8px;height:8px;border-radius:50%;background:#16a34a;margin-inline-end:4px}
+.out{background:none;border:0;color:var(--muted);font:inherit;font-size:12px;text-decoration:underline;cursor:pointer}
+.bar{display:flex;gap:6px;overflow-x:auto}
+.chip{border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:999px;padding:6px 12px;font-size:13px;white-space:nowrap;cursor:pointer}
+.chip.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+main{padding:12px 14px 90px;max-width:760px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+.top{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+select,input,textarea{font:inherit;color:var(--text);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px;width:100%}
+.type{width:auto;font-weight:700}
+.type.HOME{color:var(--home)}.type.DAMA{color:var(--dama)}.type.TRANS-OUT{color:var(--trans)}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+label.f{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
+.steps{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:10px 0}
+.step{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;padding:8px;text-align:start;font:inherit;font-size:13px;cursor:pointer;display:flex;flex-direction:column;gap:2px;min-height:48px}
+.step.done{background:var(--accent-bg);border-color:var(--accent)}
+.step b{font-weight:600}.step small{color:var(--muted)}
+.prog{height:6px;background:var(--line);border-radius:4px;overflow:hidden;margin-bottom:6px}
+.prog div{height:100%;background:var(--accent)}
+.timer{font-size:13px;font-weight:600;color:var(--warn);margin:0 0 8px}.timer.fin{color:var(--accent)}
+.foot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:12px;color:var(--muted)}
+.del{background:none;border:0;color:var(--danger);font:inherit;font-size:13px;cursor:pointer;padding:6px}
+.fab{position:fixed;inset-inline-end:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--accent);color:#fff;border:0;border-radius:999px;padding:14px 20px;font:inherit;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.25);cursor:pointer}
+.note{text-align:center;color:var(--muted);padding:30px 10px}
+#login{max-width:340px;margin:12vh auto;padding:0 18px}
+#login h1{font-size:22px;justify-content:center;margin-bottom:16px}
+#login input{margin-bottom:10px}
+#login button{width:100%;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:700;cursor:pointer}
+.err{color:var(--danger);font-size:13px;min-height:20px;margin-top:8px;text-align:center}
+[hidden]{display:none!important}
+</style>
+</head>
+<body>
+<div id="login" hidden>
+  <h1>🤝 Discharge Tracker</h1>
+  <input id="em" type="email" placeholder="Email" autocomplete="username">
+  <input id="pw" type="password" placeholder="Password" autocomplete="current-password">
+  <button id="go">Sign in</button>
+  <div class="err" id="err"></div>
+</div>
+<div id="app" hidden>
+  <header>
+    <h1><span>🤝 Discharge Tracker</span><span class="live"><i></i><span id="count">0</span> patients<button class="out" id="out" hidden></button></span></h1>
+    <div class="bar" id="filters"></div>
+  </header>
+  <main><div id="list"><div class="note">Loading…</div></div></main>
+  <button class="fab" id="add">＋ New patient</button>
+</div>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
+<script>
+// ===== PASTE YOUR FIREBASE CONFIG HERE (Project settings → Your apps → Web app) =====
+const firebaseConfig = {
+  apiKey: "AIzaSyAUBT-1vT7zFaP4--PHN_oWxP2OtLQVAK0",
+  authDomain: "disharge-pt-a5c03.firebaseapp.com",
+  projectId: "disharge-pt-a5c03",
+  storageBucket: "disharge-pt-a5c03.firebasestorage.app",
+  messagingSenderId: "160469341208",
+  appId: "1:160469341208:web:8e4c04452e693622825f6d"
+};
+// ====================================================================================
+const STEPS=[["initiation","Initiation started"],["refund","Refund Medications"],["financial","Financial clearance"],["homeMeds","Home medications"],["physical","Physical discharge"],["cleaning","Cleaning started"]];
+const TYPES=["HOME","DAMA","TRANS-OUT"];
+const $=id=>document.getElementById(id);
+const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const hhmm=t=>t?new Date(t).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
+function fmtDur(ms){const m=Math.max(0,Math.floor(ms/60000)),h=Math.floor(m/60),d=Math.floor(h/24);return d?`${d}d ${h%24}h ${m%60}m`:h?`${h}h ${m%60}m`:`${m}m`}
+function timerHtml(s){const a=s.initiation&&s.initiation.done?s.initiation.at:null;if(!a)return"";const e=s.physical&&s.physical.done?s.physical.at:null;return `<div class="timer ${e?"fin":"live"}" data-start="${a}">⏱ ${fmtDur((e||Date.now())-a)} ${e?"total — discharge complete":"since initiation"}</div>`}
+setInterval(()=>document.querySelectorAll(".timer.live").forEach(el=>el.textContent=`⏱ ${fmtDur(Date.now()-Number(el.dataset.start))} since initiation`),30000);
+
+if(!firebaseConfig.apiKey||firebaseConfig.apiKey==="PASTE_HERE"){document.body.innerHTML='<div class="note">Open public/index.html and paste your Firebase config first.</div>';throw new Error("no config")}
+firebase.initializeApp(firebaseConfig);
+const auth=firebase.auth(),db=firebase.firestore(),col=db.collection("discharges");
+let rows=[],filter="ALL",unsub=null,deferred=false;
+
+$("go").onclick=()=>{$("err").textContent="";auth.signInWithEmailAndPassword($("em").value.trim(),$("pw").value).catch(()=>{$("err").textContent="Wrong email or password"})};
+$("pw").onkeydown=e=>{if(e.key==="Enter")$("go").click()};
+$("login").hidden=true;$("app").hidden=false;$("out").hidden=true;
+renderFilters();
+col.orderBy("createdAt","desc").onSnapshot(s=>{rows=s.docs.map(d=>({id:d.id,data:d.data()}));safeRender()},e=>{console.error(e);$("list").innerHTML='<div class="note">Could not load data. Check Firestore rules and Publish.</div>'});
+
+function renderFilters(){
+  $("filters").innerHTML=["ALL",...TYPES].map(f=>`<button class="chip ${f===filter?"on":""}" data-f="${f}">${f==="ALL"?"All":f}</button>`).join("");
+  $("filters").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderFilters();render()});
+}
+function card(r){
+  const d=r.data,s=d.steps||{},n=STEPS.filter(([k])=>s[k]&&s[k].done).length;
+  return `<div class="card" data-id="${r.id}">
+    <div class="top"><select class="type ${esc(d.type)}" data-k="type">${TYPES.map(t=>`<option ${t===d.type?"selected":""}>${t}</option>`).join("")}</select><div style="flex:1"></div><span style="font-size:12px;color:var(--muted)">${n}/${STEPS.length}</span></div>
+    <div class="prog"><div style="width:${n/STEPS.length*100}%"></div></div>
+    ${timerHtml(s)}
+    <div class="grid">
+      <div><label class="f">Patient Name</label><input data-k="name" value="${esc(d.name)}"></div>
+      <div><label class="f">MRN</label><input inputmode="numeric" data-k="mrn" value="${esc(d.mrn)}"></div>
+      <div><label class="f">Room</label><input data-k="room" value="${esc(d.room)}"></div>
+    </div>
+    <div class="steps">${STEPS.map(([k,l])=>`<button class="step ${s[k]&&s[k].done?"done":""}" data-step="${k}"><b>${s[k]&&s[k].done?"✅":"⬜"} ${l}</b><small>${s[k]&&s[k].done?hhmm(s[k].at):"Tap when done"}</small></button>`).join("")}</div>
+    <label class="f">Comment</label><textarea rows="2" data-k="comment">${esc(d.comment)}</textarea>
+    <div class="foot"><span>Added ${hhmm(d.createdAt)}</span><button class="del" data-del>Delete</button></div>
+  </div>`;
+}
+function render(){
+  const vis=rows.filter(r=>filter==="ALL"||r.data.type===filter);
+  $("count").textContent=rows.length;
+  $("list").innerHTML=vis.length?vis.map(card).join(""):'<div class="note">No patients yet — tap “New patient”.</div>';
+}
+function safeRender(){const a=document.activeElement;if(a&&a.closest&&a.closest("#list")&&(a.tagName==="INPUT"||a.tagName==="TEXTAREA")){deferred=true;return}deferred=false;render()}
+const timers={};
+const save=(id,patch)=>col.doc(id).update(patch).catch(console.error);
+$("list").addEventListener("input",e=>{const el=e.target,c=el.closest(".card");if(!c||!el.dataset.k)return;const id=c.dataset.id,k=el.dataset.k;clearTimeout(timers[id+k]);timers[id+k]=setTimeout(()=>save(id,{[k]:el.value}),600)});
+$("list").addEventListener("focusout",()=>setTimeout(()=>{if(deferred)safeRender()},50));
+$("list").addEventListener("change",e=>{if(e.target.tagName==="SELECT")save(e.target.closest(".card").dataset.id,{type:e.target.value})});
+$("list").addEventListener("click",e=>{
+  const c=e.target.closest(".card");if(!c)return;const id=c.dataset.id;
+  const st=e.target.closest("[data-step]");
+  if(st){const k=st.dataset.step,r=rows.find(x=>x.id===id),cur=r&&r.data.steps&&r.data.steps[k]&&r.data.steps[k].done;save(id,{["steps."+k]:cur?{done:false,at:null}:{done:true,at:Date.now()}});return}
+  const del=e.target.closest("[data-del]");
+  if(del){if(del.dataset.armed)col.doc(id).delete().catch(console.error);else{del.dataset.armed=1;del.textContent="Tap again to confirm";setTimeout(()=>{del.dataset.armed="";del.textContent="Delete"},3000)}}
+});
+$("add").onclick=()=>col.add({type:filter!=="ALL"?filter:"HOME",name:"",mrn:"",room:"",comment:"",steps:{},createdAt:Date.now()}).catch(console.error);
+</script>
+</body>
+</html>
