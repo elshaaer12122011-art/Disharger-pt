@@ -50,6 +50,9 @@ label.f{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
 .sheet textarea{min-height:220px;font-size:14px}
 .sheet .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
 .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:90px;background:var(--text);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:30;max-width:90%}
+.grid .full{grid-column:1/-1}.sheet{max-height:92vh;overflow:auto}
+.br{display:flex;align-items:center;gap:6px;margin:8px 0;font-size:13px}.bl{width:34%;overflow-wrap:anywhere}.bt{flex:1;height:14px;background:var(--line);border-radius:4px;overflow:hidden}.bt div{height:100%;background:var(--accent)}.bv{width:80px;text-align:end;font-weight:600}
+.note2{font-size:12px;color:var(--muted)}.un{border-top:1px solid var(--line);padding:8px 0;font-size:13px}.rs{display:flex;justify-content:space-between;color:var(--muted)}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -72,6 +75,10 @@ label.f{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
   <div class="modal" id="pm" hidden><div class="sheet"><h2>Paste discharge message</h2><textarea id="pmt" placeholder="Paste the message here…"></textarea><div class="err" id="pme"></div><div class="row"><button class="chip" id="pmc">Cancel</button><button class="chip on" id="pmg">Add patient</button></div></div></div>
 </div>
 
+<div class="modal" id="pv" hidden><div class="sheet"><img id="pvi" style="width:100%;border-radius:8px"><div class="row"><button class="chip" id="pvr">Retake</button><button class="chip" id="pvd">Delete</button><button class="chip on" id="pvc">Close</button></div></div></div>
+<input type="file" id="pf" accept="image/*" capture="environment" hidden>
+<input type="file" id="pg" accept="image/*" hidden>
+<div class="modal" id="pc" hidden><div class="sheet"><h2>Card photo</h2><div class="row" style="justify-content:stretch"><button class="chip on" id="pcc" style="flex:1;padding:14px">📷 Camera</button><button class="chip on" id="pcg" style="flex:1;padding:14px">🖼 Gallery</button></div><div class="row"><button class="chip" id="pcx">Cancel</button></div></div></div>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js"></script>
@@ -87,7 +94,9 @@ const firebaseConfig = {
 };
 // ====================================================================================
 const STEPS=[["initiation","Initiation started"],["refund","Refund Medications"],["financial","Financial clearance"],["homeMeds","Home medications"],["physical","Physical discharge"],["cleaning","Cleaning started"]];
-const TYPES=["HOME","DAMA","TRANS-OUT"];
+const TYPES=["HOME","DAMA","TRANS-OUT","TRANS-IN"];
+const UNITS=["11th-IMCU","3rd-OBGYN","11th-ICU","3rd-Nursery","6th-SICU","10th-Neuro ICU","8th-Nurse Station","9th-Nurse Station","3rd-NICU","4th-Day Case","5th-CCU","10th-ICU","4th-DCU","4th-Nurse Station","5th-CathLab"];
+const opts=(l,v,ph)=>`<option value="">${ph}</option>`+l.map(x=>`<option ${x===v?"selected":""}>${esc(x)}</option>`).join("");
 const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const hhmm=t=>t?new Date(t).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
@@ -98,7 +107,7 @@ setInterval(()=>document.querySelectorAll(".timer.live").forEach(el=>el.textCont
 if(!firebaseConfig.apiKey||firebaseConfig.apiKey==="PASTE_HERE"){document.body.innerHTML='<div class="note">Open public/index.html and paste your Firebase config first.</div>';throw new Error("no config")}
 firebase.initializeApp(firebaseConfig);
 const auth=firebase.auth(),db=firebase.firestore(),col=db.collection("discharges");
-let rows=[],filter="ALL",unsub=null,deferred=false;
+let view="list",sf={type:"ALL",unit:"ALL",from:"",to:""},camId=null,pvId=null,rows=[],filter="ALL",unsub=null,deferred=false;
 
 $("go").onclick=()=>{$("err").textContent="";auth.signInWithEmailAndPassword($("em").value.trim(),$("pw").value).catch(()=>{$("err").textContent="Wrong email or password"})};
 $("pw").onkeydown=e=>{if(e.key==="Enter")$("go").click()};
@@ -107,26 +116,30 @@ renderFilters();
 col.orderBy("createdAt","desc").onSnapshot(s=>{rows=s.docs.map(d=>({id:d.id,data:d.data()}));safeRender()},e=>{console.error(e);$("list").innerHTML='<div class="note">Could not load data. Check Firestore rules and Publish.</div>'});
 
 function renderFilters(){
-  $("filters").innerHTML=["ALL",...TYPES].map(f=>`<button class="chip ${f===filter?"on":""}" data-f="${f}">${f==="ALL"?"All":f}</button>`).join("");
-  $("filters").querySelectorAll("button").forEach(b=>b.onclick=()=>{filter=b.dataset.f;renderFilters();render()});
+  $("filters").innerHTML=["ALL",...TYPES,"STATS"].map(f=>`<button class="chip ${(f==="STATS"?view==="stats":view==="list"&&f===filter)?"on":""}" data-f="${f}">${f==="ALL"?"All":f==="STATS"?"📊 Stats":f}</button>`).join("");
+  $("filters").querySelectorAll("button").forEach(b=>b.onclick=()=>{const f=b.dataset.f;if(f==="STATS")view="stats";else{view="list";filter=f}renderFilters();render()});
 }
 function card(r){
   const d=r.data,s=d.steps||{},n=STEPS.filter(([k])=>s[k]&&s[k].done).length;
   return `<div class="card" data-id="${r.id}">
     <div class="top"><select class="type ${esc(d.type)}" data-k="type">${TYPES.map(t=>`<option ${t===d.type?"selected":""}>${t}</option>`).join("")}</select><div style="flex:1"></div><span style="font-size:12px;color:var(--muted)">${n}/${STEPS.length}</span></div>
     <div class="prog"><div style="width:${n/STEPS.length*100}%"></div></div>
-    ${timerHtml(s)}
+    ${timerHtml(s)}${delayHtml(s)}
     <div class="grid">
       <div><label class="f">Patient Name</label><input data-k="name" value="${esc(d.name)}"></div>
       <div><label class="f">MRN</label><input inputmode="numeric" data-k="mrn" value="${esc(d.mrn)}"></div>
       <div><label class="f">Room</label><input data-k="room" value="${esc(d.room)}"></div>
+      <div class="full"><label class="f">Unit</label><select data-k="unit">${opts(UNITS,d.unit,"— choose unit —")}</select></div>
+      ${d.type==="TRANS-OUT"?`<div class="full"><label class="f">Transfer to (hospital)</label><input data-k="dest" value="${esc(d.dest)}"></div>`:d.type==="TRANS-IN"?`<div class="full"><label class="f">Transfer to (room)</label><input data-k="dest" value="${esc(d.dest)}"></div>`:""}
     </div>
     <div class="steps">${STEPS.map(([k,l])=>`<button class="step ${s[k]&&s[k].done?"done":""}" data-step="${k}"><b>${s[k]&&s[k].done?"✅":"⬜"} ${l}</b><small>${esc(stepNote(s[k]))}</small></button>`).join("")}</div>
     <label class="f">Comment</label><textarea rows="2" data-k="comment">${esc(d.comment)}</textarea>
-    <div class="foot"><span>Added ${hhmm(d.createdAt)}</span><button class="del" data-del>Delete</button></div>
+    <div class="foot"><span>Added ${hhmm(d.createdAt)}</span><button class="del" style="color:var(--accent)" data-photo>${d.hasPhoto?"🖼 View card photo":"📷 Card photo"}</button><button class="del" data-del>Delete</button></div>
   </div>`;
 }
 function render(){
+  $("add").hidden=$("paste").hidden=view==="stats";
+  if(view==="stats"){renderStats();return}
   const vis=rows.filter(r=>filter==="ALL"||r.data.type===filter);
   $("count").textContent=rows.length;
   $("list").innerHTML=vis.length?vis.map(card).join(""):'<div class="note">No patients yet — tap “New patient”.</div>';
@@ -136,13 +149,14 @@ const timers={};
 const save=(id,patch)=>col.doc(id).update(patch).catch(console.error);
 $("list").addEventListener("input",e=>{const el=e.target,c=el.closest(".card");if(!c||!el.dataset.k)return;const id=c.dataset.id,k=el.dataset.k;clearTimeout(timers[id+k]);timers[id+k]=setTimeout(()=>save(id,{[k]:el.value}),600)});
 $("list").addEventListener("focusout",()=>setTimeout(()=>{if(deferred)safeRender()},50));
-$("list").addEventListener("change",e=>{if(e.target.tagName==="SELECT")save(e.target.closest(".card").dataset.id,{type:e.target.value})});
+$("list").addEventListener("change",e=>{const el=e.target;if(el.dataset.sf){sf[el.dataset.sf]=el.value;render();return}if(el.tagName==="SELECT"&&el.dataset.k)save(el.closest(".card").dataset.id,{[el.dataset.k]:el.value})});
 $("list").addEventListener("click",e=>{
   const c=e.target.closest(".card");if(!c)return;const id=c.dataset.id;
   const st=e.target.closest("[data-step]");
   if(st){const k=st.dataset.step,r=rows.find(x=>x.id===id),cur=r&&r.data.steps&&r.data.steps[k]&&r.data.steps[k].done;save(id,{["steps."+k]:cur?{done:false,at:null,text:null}:{done:true,at:Date.now(),text:null}});return}
+  const ph=e.target.closest("[data-photo]");if(ph){const r=rows.find(x=>x.id===id);r&&r.data.hasPhoto?viewPhoto(id):openCam(id);return}
   const del=e.target.closest("[data-del]");
-  if(del){if(del.dataset.armed)col.doc(id).delete().catch(console.error);else{del.dataset.armed=1;del.textContent="Tap again to confirm";setTimeout(()=>{del.dataset.armed="";del.textContent="Delete"},3000)}}
+  if(del){if(del.dataset.armed){col.doc(id).delete().catch(console.error);db.collection("photos").doc(id).delete().catch(()=>{})}else{del.dataset.armed=1;del.textContent="Tap again to confirm";setTimeout(()=>{del.dataset.armed="";del.textContent="Delete"},3000)}}
 });
 
 function stepNote(x){if(!x||!x.done)return"Tap when done";const t=x.at?hhmm(x.at):"";const tx=x.text&&!TIMERE.test(x.text.trim())?x.text:"";return [t,tx].filter(Boolean).join(" · ")||"Done"}
@@ -184,6 +198,39 @@ $("pmg").onclick=()=>{
   col.add({type:o.type||(filter!=="ALL"?filter:"HOME"),name:o.name,mrn:o.mrn,room:o.room,comment:o.comment,steps:o.steps,createdAt:Date.now()})
     .then(()=>{$("pm").hidden=true;toast("Added: "+(o.name||o.mrn||o.room))}).catch(e=>{console.error(e);$("pme").textContent="Could not save. Check connection."});
 };
+
+const stepLabel=k=>(STEPS.find(x=>x[0]===k)||[0,k])[1];
+function delayStage(s){const P=s.physical&&s.physical.at,L=["initiation","refund","financial","homeMeds","physical"].filter(k=>s[k]&&s[k].at&&(!P||s[k].at<=P)).map(k=>[k,s[k].at]).sort((a,b)=>a[1]-b[1]);let best=null;for(let i=1;i<L.length;i++){const ms=L[i][1]-L[i-1][1];if(!best||ms>best.ms)best={key:L[i][0],ms}}return best}
+function delayHtml(s){const x=delayStage(s);return x?`<div class="note2" style="margin-bottom:8px">⏳ Longest stage: <b>${esc(stepLabel(x.key))}</b> (${fmtDur(x.ms)})</div>`:""}
+function shrink(f){return new Promise((ok,no)=>{const im=new Image();im.onload=()=>{const k=Math.min(1,1100/Math.max(im.width,im.height)),c=document.createElement("canvas");c.width=im.width*k;c.height=im.height*k;c.getContext("2d").drawImage(im,0,0,c.width,c.height);ok(c.toDataURL("image/jpeg",.6))};im.onerror=no;im.src=URL.createObjectURL(f)})}
+function openCam(id){camId=id;$("pc").hidden=false}
+$("pcc").onclick=()=>{$("pc").hidden=true;$("pf").click()};
+$("pcg").onclick=()=>{$("pc").hidden=true;$("pg").click()};
+$("pcx").onclick=()=>{$("pc").hidden=true};
+const onPhoto=async e=>{const f=e.target.files[0];e.target.value="";if(!f||!camId)return;toast("Saving photo…");try{const data=await shrink(f);await db.collection("photos").doc(camId).set({data,at:Date.now()});await col.doc(camId).update({hasPhoto:true});toast("Photo saved")}catch(x){console.error(x);toast("Could not save photo")}};
+$("pf").onchange=$("pg").onchange=onPhoto;
+function viewPhoto(id){pvId=id;$("pvi").removeAttribute("src");$("pv").hidden=false;db.collection("photos").doc(id).get().then(d=>{if(d.exists)$("pvi").src=d.data().data}).catch(console.error)}
+$("pvc").onclick=()=>$("pv").hidden=true;
+$("pvr").onclick=()=>{$("pv").hidden=true;openCam(pvId)};
+$("pvd").onclick=()=>{$("pv").hidden=true;db.collection("photos").doc(pvId).delete().catch(console.error);save(pvId,{hasPhoto:false})};
+const fmtH=ms=>{const m=Math.round(ms/60000);return String(Math.floor(m/60)).padStart(2,"0")+":"+String(m%60).padStart(2,"0")};
+function renderStats(){
+  const loc=t=>new Date(t-new Date(t).getTimezoneOffset()*6e4).toISOString().slice(0,10),g={};
+  rows.forEach(({data:d})=>{
+    if(sf.type!=="ALL"&&d.type!==sf.type)return;
+    const u=d.unit||"No unit";if(sf.unit!=="ALL"&&u!==sf.unit)return;
+    const s=d.steps||{},a=s.initiation&&s.initiation.at,e=s.physical&&s.physical.at,day=loc(a||d.createdAt);
+    if((sf.from&&day<sf.from)||(sf.to&&day>sf.to))return;
+    const o=g[u]=g[u]||{n:0,sum:0,k:0,r:{}};o.n++;
+    if(a&&e&&e>a){o.sum+=e-a;o.k++}
+    const ds=delayStage(s);if(ds&&e){const x=o.r[ds.key]=o.r[ds.key]||{c:0,sum:0};x.c++;x.sum+=ds.ms}
+  });
+  const us=Object.entries(g),bars=us.filter(([,o])=>o.k).map(([u,o])=>[u,o.sum/o.k,o.k]).sort((a,b)=>b[1]-a[1]),mx=bars.length?bars[0][1]:1;
+  const sel=(k,l,all)=>`<select data-sf="${k}">${[["ALL",all],...l.map(x=>[x,x])].map(([v,t])=>`<option value="${esc(v)}" ${sf[k]===v?"selected":""}>${esc(t)}</option>`).join("")}</select>`;
+  $("list").innerHTML=`<div class="card"><div class="grid"><div><label class="f">Discharge type</label>${sel("type",TYPES,"All")}</div><div><label class="f">Unit</label>${sel("unit",UNITS,"All")}</div><div><label class="f">From</label><input type="date" data-sf="from" value="${sf.from}"></div><div><label class="f">To</label><input type="date" data-sf="to" value="${sf.to}"></div></div></div>
+  <div class="card"><b>Avg clearance duration per unit (hh:mm)</b><div class="note2">Initiation started → Physical discharge · (n) = patients</div>${bars.map(([u,v,k])=>`<div class="br"><span class="bl">${esc(u)}</span><div class="bt"><div style="width:${v/mx*100}%"></div></div><span class="bv">${fmtH(v)} <small>(${k})</small></span></div>`).join("")||'<div class="note">No completed discharges in this range.</div>'}</div>
+  <div class="card"><b>Main delay by unit (longest stage)</b>${us.sort((a,b)=>b[1].n-a[1].n).map(([u,o])=>{const rs=Object.entries(o.r).sort((a,b)=>b[1].c-a[1].c).slice(0,3);return `<div class="un"><div><b>${esc(u)}</b> <small>${o.n} patients</small></div>${rs.map(([r,x])=>`<div class="rs"><span>${esc(stepLabel(r))} · avg ${fmtDur(x.sum/x.c)}</span><b>${x.c}</b></div>`).join("")||'<small>No completed discharges</small>'}</div>`}).join("")||'<div class="note">No data.</div>'}</div>`;
+}
 $("add").onclick=()=>col.add({type:filter!=="ALL"?filter:"HOME",name:"",mrn:"",room:"",comment:"",steps:{},createdAt:Date.now()}).catch(console.error);
 </script>
 </body>
