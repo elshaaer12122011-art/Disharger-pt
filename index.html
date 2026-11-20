@@ -43,6 +43,13 @@ label.f{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
 #login input{margin-bottom:10px}
 #login button{width:100%;background:var(--accent);color:#fff;border:0;border-radius:10px;padding:12px;font:inherit;font-weight:700;cursor:pointer}
 .err{color:var(--danger);font-size:13px;min-height:20px;margin-top:8px;text-align:center}
+.fab2{position:fixed;inset-inline-start:16px;bottom:calc(16px + env(safe-area-inset-bottom,0px));background:var(--card);color:var(--text);border:1px solid var(--line);border-radius:999px;padding:14px 18px;font:inherit;font-weight:700;box-shadow:0 4px 14px rgba(0,0,0,.2);cursor:pointer}
+.modal{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:20;display:flex;align-items:flex-end;justify-content:center}
+.sheet{background:var(--card);width:100%;max-width:560px;border-radius:16px 16px 0 0;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+.sheet h2{font-size:17px;margin:0 0 10px}
+.sheet textarea{min-height:220px;font-size:14px}
+.sheet .row{display:flex;gap:8px;justify-content:flex-end;margin-top:10px}
+.toast{position:fixed;left:50%;transform:translateX(-50%);bottom:90px;background:var(--text);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:30;max-width:90%}
 [hidden]{display:none!important}
 </style>
 </head>
@@ -60,7 +67,9 @@ label.f{font-size:12px;color:var(--muted);display:block;margin-bottom:2px}
     <div class="bar" id="filters"></div>
   </header>
   <main><div id="list"><div class="note">Loading…</div></div></main>
+  <button class="fab2" id="paste">📋 Paste message</button>
   <button class="fab" id="add">＋ New patient</button>
+  <div class="modal" id="pm" hidden><div class="sheet"><h2>Paste discharge message</h2><textarea id="pmt" placeholder="Paste the message here…"></textarea><div class="err" id="pme"></div><div class="row"><button class="chip" id="pmc">Cancel</button><button class="chip on" id="pmg">Add patient</button></div></div></div>
 </div>
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -83,7 +92,7 @@ const $=id=>document.getElementById(id);
 const esc=s=>String(s==null?"":s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const hhmm=t=>t?new Date(t).toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}):"";
 function fmtDur(ms){const m=Math.max(0,Math.floor(ms/60000)),h=Math.floor(m/60),d=Math.floor(h/24);return d?`${d}d ${h%24}h ${m%60}m`:h?`${h}h ${m%60}m`:`${m}m`}
-function timerHtml(s){const a=s.initiation&&s.initiation.done?s.initiation.at:null;if(!a)return"";const e=s.physical&&s.physical.done?s.physical.at:null;return `<div class="timer ${e?"fin":"live"}" data-start="${a}">⏱ ${fmtDur((e||Date.now())-a)} ${e?"total — discharge complete":"since initiation"}</div>`}
+function timerHtml(s){const a=s.initiation&&s.initiation.done?s.initiation.at:null;if(!a)return"";const e=s.physical&&s.physical.done&&s.physical.at?s.physical.at:null;return `<div class="timer ${e?"fin":"live"}" data-start="${a}">⏱ ${fmtDur((e||Date.now())-a)} ${e?"total — discharge complete":"since initiation"}</div>`}
 setInterval(()=>document.querySelectorAll(".timer.live").forEach(el=>el.textContent=`⏱ ${fmtDur(Date.now()-Number(el.dataset.start))} since initiation`),30000);
 
 if(!firebaseConfig.apiKey||firebaseConfig.apiKey==="PASTE_HERE"){document.body.innerHTML='<div class="note">Open public/index.html and paste your Firebase config first.</div>';throw new Error("no config")}
@@ -112,7 +121,7 @@ function card(r){
       <div><label class="f">MRN</label><input inputmode="numeric" data-k="mrn" value="${esc(d.mrn)}"></div>
       <div><label class="f">Room</label><input data-k="room" value="${esc(d.room)}"></div>
     </div>
-    <div class="steps">${STEPS.map(([k,l])=>`<button class="step ${s[k]&&s[k].done?"done":""}" data-step="${k}"><b>${s[k]&&s[k].done?"✅":"⬜"} ${l}</b><small>${s[k]&&s[k].done?hhmm(s[k].at):"Tap when done"}</small></button>`).join("")}</div>
+    <div class="steps">${STEPS.map(([k,l])=>`<button class="step ${s[k]&&s[k].done?"done":""}" data-step="${k}"><b>${s[k]&&s[k].done?"✅":"⬜"} ${l}</b><small>${esc(stepNote(s[k]))}</small></button>`).join("")}</div>
     <label class="f">Comment</label><textarea rows="2" data-k="comment">${esc(d.comment)}</textarea>
     <div class="foot"><span>Added ${hhmm(d.createdAt)}</span><button class="del" data-del>Delete</button></div>
   </div>`;
@@ -131,10 +140,50 @@ $("list").addEventListener("change",e=>{if(e.target.tagName==="SELECT")save(e.ta
 $("list").addEventListener("click",e=>{
   const c=e.target.closest(".card");if(!c)return;const id=c.dataset.id;
   const st=e.target.closest("[data-step]");
-  if(st){const k=st.dataset.step,r=rows.find(x=>x.id===id),cur=r&&r.data.steps&&r.data.steps[k]&&r.data.steps[k].done;save(id,{["steps."+k]:cur?{done:false,at:null}:{done:true,at:Date.now()}});return}
+  if(st){const k=st.dataset.step,r=rows.find(x=>x.id===id),cur=r&&r.data.steps&&r.data.steps[k]&&r.data.steps[k].done;save(id,{["steps."+k]:cur?{done:false,at:null,text:null}:{done:true,at:Date.now(),text:null}});return}
   const del=e.target.closest("[data-del]");
   if(del){if(del.dataset.armed)col.doc(id).delete().catch(console.error);else{del.dataset.armed=1;del.textContent="Tap again to confirm";setTimeout(()=>{del.dataset.armed="";del.textContent="Delete"},3000)}}
 });
+
+function stepNote(x){if(!x||!x.done)return"Tap when done";const t=x.at?hhmm(x.at):"";const tx=x.text&&!TIMERE.test(x.text.trim())?x.text:"";return [t,tx].filter(Boolean).join(" · ")||"Done"}
+const TIMERE=/^(\d{1,2})[:.](\d{2})\s*(h|hrs?|am|pm)?$/i;
+function parseMsg(txt){
+  const out={type:null,name:"",mrn:"",room:"",comment:"",steps:{}};
+  const map={"discharge":"type","room":"room","patient name":"name","name":"name","mrn":"mrn","comment":"comment","comments":"comment","initiation started":"initiation","initiation":"initiation","refund medications":"refund","refund medication":"refund","financial clearance":"financial","home medications":"homeMeds","home medication":"homeMeds","physical discharge":"physical","cleaning started":"cleaning"};
+  let last=null;
+  txt.split(/\r?\n/).forEach(line=>{
+    const clean=line.replace(/^[^A-Za-z0-9\u0600-\u06FF]+/,"");
+    const m=clean.match(/^([A-Za-z ]+?)\s*:\s*(.*)$/);
+    const key=m&&map[m[1].trim().toLowerCase()];
+    if(key){
+      last=key;const v=m[2].trim();
+      if(key==="type"){const f=TYPES.filter(t=>new RegExp("\\b"+t.replace("-","[- ]?")+"\\b","i").test(v));out.type=f.length===1?f[0]:null}
+      else if(["room","name","mrn","comment"].includes(key))out[key]=v;
+      else if(v)out.steps[key]={done:true,at:null,text:v};
+    }else if(last==="comment"&&line.trim()){out.comment+=(out.comment?" ":"")+line.trim()}
+  });
+  let prev=null;const ts=[];
+  STEPS.forEach(([k])=>{
+    const st=out.steps[k];if(!st)return;const m=st.text.trim().match(TIMERE);if(!m)return;
+    let h=+m[1],mi=+m[2];const ap=(m[3]||"").toLowerCase();
+    if(ap==="pm"&&h<12)h+=12;if(ap==="am"&&h===12)h=0;
+    const d=new Date();d.setHours(h,mi,0,0);let t=d.getTime();
+    while(prev&&t<prev)t+=86400000;
+    prev=t;st.at=t;ts.push(st);
+  });
+  if(ts.length&&Math.max(...ts.map(x=>x.at))>Date.now()+3600000)ts.forEach(x=>x.at-=86400000);
+  return out;
+}
+function toast(m){const t=document.createElement("div");t.className="toast";t.textContent=m;document.body.appendChild(t);setTimeout(()=>t.remove(),3000)}
+$("paste").onclick=()=>{$("pmt").value="";$("pme").textContent="";$("pm").hidden=false;setTimeout(()=>$("pmt").focus(),50)};
+$("pmc").onclick=()=>{$("pm").hidden=true};
+$("pm").addEventListener("click",e=>{if(e.target.id==="pm")$("pm").hidden=true});
+$("pmg").onclick=()=>{
+  const o=parseMsg($("pmt").value);
+  if(!o.name&&!o.mrn&&!o.room){$("pme").textContent="Couldn't read the message. Make sure it has lines like Room:, Patient Name:, MRN:";return}
+  col.add({type:o.type||(filter!=="ALL"?filter:"HOME"),name:o.name,mrn:o.mrn,room:o.room,comment:o.comment,steps:o.steps,createdAt:Date.now()})
+    .then(()=>{$("pm").hidden=true;toast("Added: "+(o.name||o.mrn||o.room))}).catch(e=>{console.error(e);$("pme").textContent="Could not save. Check connection."});
+};
 $("add").onclick=()=>col.add({type:filter!=="ALL"?filter:"HOME",name:"",mrn:"",room:"",comment:"",steps:{},createdAt:Date.now()}).catch(console.error);
 </script>
 </body>
